@@ -14,21 +14,21 @@ import (
 type DB struct{ db *sql.DB }
 
 type Policy struct {
-	ID           string  `json:"id"`
-	Title        string  `json:"title"`
-	Body         string  `json:"body"`
-	Category     string  `json:"category,omitempty"`
-	Version      int     `json:"version"`
-	Status       string  `json:"status"` // draft, active, retired
-	Owner        string  `json:"owner,omitempty"`
-	RequiresAck  bool    `json:"requires_ack"`
-	AckDeadline  string  `json:"ack_deadline,omitempty"`
-	CreatedAt    string  `json:"created_at"`
-	UpdatedAt    string  `json:"updated_at"`
-	AckCount     int     `json:"ack_count"`
-	MemberCount  int     `json:"member_count"`
+	ID            string  `json:"id"`
+	Title         string  `json:"title"`
+	Body          string  `json:"body"`
+	Category      string  `json:"category,omitempty"`
+	Version       int     `json:"version"`
+	Status        string  `json:"status"` // draft, active, retired
+	Owner         string  `json:"owner,omitempty"`
+	RequiresAck   bool    `json:"requires_ack"`
+	AckDeadline   string  `json:"ack_deadline,omitempty"`
+	CreatedAt     string  `json:"created_at"`
+	UpdatedAt     string  `json:"updated_at"`
+	AckCount      int     `json:"ack_count"`
+	MemberCount   int     `json:"member_count"`
 	CompliancePct float64 `json:"compliance_pct"`
-	EvidenceCount int    `json:"evidence_count"`
+	EvidenceCount int     `json:"evidence_count"`
 }
 
 type Member struct {
@@ -121,6 +121,7 @@ func Open(dataDir string) (*DB, error) {
 			return nil, fmt.Errorf("migrate: %w", err)
 		}
 	}
+	db.Exec(`CREATE TABLE IF NOT EXISTS extras(resource TEXT NOT NULL,record_id TEXT NOT NULL,data TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(resource, record_id))`)
 	return &DB{db: db}, nil
 }
 
@@ -418,11 +419,11 @@ func (d *DB) Categories() []string {
 // ── Stats ──
 
 type Stats struct {
-	Policies       int     `json:"policies"`
-	Active         int     `json:"active"`
-	Members        int     `json:"members"`
-	Acknowledgments int    `json:"acknowledgments"`
-	Evidence       int     `json:"evidence"`
+	Policies          int     `json:"policies"`
+	Active            int     `json:"active"`
+	Members           int     `json:"members"`
+	Acknowledgments   int     `json:"acknowledgments"`
+	Evidence          int     `json:"evidence"`
 	OverallCompliance float64 `json:"overall_compliance"`
 }
 
@@ -450,4 +451,56 @@ func (d *DB) Stats() Stats {
 		}
 	}
 	return s
+}
+
+// ─── Extras: generic key-value storage for personalization custom fields ───
+
+func (d *DB) GetExtras(resource, recordID string) string {
+	var data string
+	err := d.db.QueryRow(
+		`SELECT data FROM extras WHERE resource=? AND record_id=?`,
+		resource, recordID,
+	).Scan(&data)
+	if err != nil || data == "" {
+		return "{}"
+	}
+	return data
+}
+
+func (d *DB) SetExtras(resource, recordID, data string) error {
+	if data == "" {
+		data = "{}"
+	}
+	_, err := d.db.Exec(
+		`INSERT INTO extras(resource, record_id, data) VALUES(?, ?, ?)
+		 ON CONFLICT(resource, record_id) DO UPDATE SET data=excluded.data`,
+		resource, recordID, data,
+	)
+	return err
+}
+
+func (d *DB) DeleteExtras(resource, recordID string) error {
+	_, err := d.db.Exec(
+		`DELETE FROM extras WHERE resource=? AND record_id=?`,
+		resource, recordID,
+	)
+	return err
+}
+
+func (d *DB) AllExtras(resource string) map[string]string {
+	out := make(map[string]string)
+	rows, _ := d.db.Query(
+		`SELECT record_id, data FROM extras WHERE resource=?`,
+		resource,
+	)
+	if rows == nil {
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, data string
+		rows.Scan(&id, &data)
+		out[id] = data
+	}
+	return out
 }
